@@ -368,11 +368,13 @@ module.exports = (db) => {
     db.costSaving.belongsTo(db.supplier, {
         foreignKey: "supplierName", // Note: The field name is supplierName but it stores the supplier ID
         as: "supplierDetails",
+        constraints: false
     });
 
     db.supplier.hasMany(db.costSaving, {
         foreignKey: "supplierName",
         as: "costSavings",
+        constraints: false
     });
 
     // ================ contractPreference association ================

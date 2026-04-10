@@ -9,7 +9,7 @@ module.exports = (sequelize, DataTypes) => {
         },
 
         supplierName: {
-            type: DataTypes.STRING,
+            type: DataTypes.BIGINT,
             allowNull: false
         },
         requesterName: {
