@@ -9,34 +9,63 @@ const recipientEmail = process.env.RECIPIENT_EMAIL;
 
 const sendRenewalNotifications = async () => {
     try {
-        console.log('Running renewal notification job...');
+        console.log('Running automated renewal notification job...');
 
-        const notifications = await renewal_notification.findAll();
+        const targetDays = [30, 60, 90];
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
 
-        for (const notification of notifications) {
-            const { contractType, remindBeforeDays, emailSubject, emailBody } = notification;
+        for (const days of targetDays) {
+            const targetDate = new Date(today);
+            targetDate.setDate(today.getDate() + days);
+            
+            // Define a range for the target date to avoid missed notifications
+            const nextDay = new Date(targetDate);
+            nextDay.setDate(targetDate.getDate() + 1);
 
             const contracts = await contract.findAll({
                 where: {
-                    // contractType: { [Op.in]: contractType }, 
+                    status: 'Active',
                     endDate: {
-                        [Op.lte]: new Date(Date.now() + remindBeforeDays * 24 * 60 * 60 * 1000),
-                    },
+                        [Op.gte]: targetDate,
+                        [Op.lt]: nextDay
+                    }
                 },
+                include: [
+                    {
+                        model: db.supplier,
+                        as: 'supplier',
+                        attributes: ['name']
+                    }
+                ]
             });
 
             for (const c of contracts) {
-                const customizedEmailBody = emailBody
-                    .replace('[Recipient]', 'User')
-                    .replace('[Contract Type]', c.contractType);
+                const supplierName = c.supplier?.name || "N/A";
+                const intakeNumber = c.intakeRequestId || c.id;
+                const expiryDate = c.endDate.toISOString().split('T')[0];
 
-                // Send email
-                const success = await sendEmail(recipientEmail, emailSubject, customizedEmailBody);
+                const emailSubject = `Renewal Alert: ${days} Days Remaining for ${supplierName}`;
+                const emailBody = `
+Automated Renewal Notification
+
+This is to inform you that the contract for Supplier: ${supplierName} (Intake/Contract ID: ${intakeNumber}) is set to expire on ${expiryDate}.
+
+Please take the necessary actions for renewal or termination.
+
+Regards,
+ProX AI System
+                `;
+
+                // Send email to a configured recipient or department email
+                // Requirement: Dynamic email template will be provided later. 
+                // For now, using a standardized text-based format.
+                const success = await sendEmail(recipientEmail, emailSubject, emailBody);
 
                 if (success) {
-                    console.log(`Email sent for contract: ${c.contractName}`);
+                    console.log(`Email sent for contract ${c.id} (${days} days before expiry)`);
                 } else {
-                    console.error(`Failed to send email for contract: ${c.contractName}`);
+                    console.error(`Failed to send email for contract ${c.id}`);
                 }
             }
         }

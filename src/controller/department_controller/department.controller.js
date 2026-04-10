@@ -447,6 +447,33 @@ const update_department_workflow_status = async (req, res) => {
         }, { transaction });
       }
 
+      // 4. Recompute overall request status based on ALL approver statuses
+      const allApprovers = await db.intake_request_approvers.findAll({ 
+        where: { intakeRequestId }, 
+        transaction 
+      });
+
+      if (allApprovers.length > 0) {
+        const hasRejected = allApprovers.some(app => app.status === 'rejected');
+        const areAllApproved = allApprovers.every(app => app.status === 'approved');
+
+        let newOverallStatus;
+        if (hasRejected) {
+          newOverallStatus = 'rejected';
+        } else if (areAllApproved) {
+          newOverallStatus = 'approved';
+        } else {
+          // Some pending, some approved — request is still active/in-progress
+          newOverallStatus = 'active';
+        }
+
+        console.log(`[WORKFLOW_UPDATE] Recomputed overall status for request ${intakeRequestId}: ${newOverallStatus}`);
+        await db.intake_request.update(
+          { status: newOverallStatus },
+          { where: { id: intakeRequestId }, transaction }
+        );
+      }
+
       await transaction.commit();
       res.status(200).json({
         status: true,

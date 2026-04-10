@@ -5,7 +5,8 @@ exports.createCostSaving = async (req, res) => {
   try {
     const {
       supplierName,
-      depreciationScheduleYears,
+      requesterName,
+      departmentId,
       group,
       category,
       reportingYear,
@@ -27,12 +28,13 @@ exports.createCostSaving = async (req, res) => {
       intakeRequest
     } = req.body;
  
-    const userId = req.user.id; // Corrected: get from req.user set by authenticate middleware
+    const userId = req.user.id;
  
     const newEntry = await CostSaving.create({
       supplierName,
-      depreciationScheduleYears,
-      group: "N/A", // Hardcoded default to bypass DB notNull constraint since field is removed from UI
+      requesterName,
+      departmentId,
+      group: group || "N/A",
       category,
       reportingYear,
       currency,
@@ -61,21 +63,92 @@ exports.createCostSaving = async (req, res) => {
   }
 };
 
-// Get all cost saving entries
+// Get all cost saving entries with filtering options
 exports.getAllCostSavings = async (req, res) => {
   try {
-    const { userType, id: userId } = req.user; // Corrected: get from req.user set by authenticate middleware
-    let query = {};
+    const { userType, id: userId } = req.user;
+    const { 
+      category, 
+      departmentId, 
+      supplierName, 
+      reportingYear, 
+      benefitStartMonth, 
+      minAmount, 
+      maxAmount, 
+      startDate, 
+      endDate,
+      signerId 
+    } = req.query;
 
+    let whereClause = {};
+
+    // Standard RBAC: Admin only sees their own entries
     if (userType === 'admin') {
-      query.where = { userId: userId };
+      whereClause.userId = userId;
     }
 
-    const entries = await CostSaving.findAll(query);
+    // Apply basic filters
+    if (category) whereClause.category = category;
+    if (supplierName) whereClause.supplierName = { [db.Sequelize.Op.like]: `%${supplierName}%` };
+    if (reportingYear) whereClause.reportingYear = reportingYear;
+    if (benefitStartMonth) whereClause.benefitStartMonth = benefitStartMonth;
+
+    // Amount range filter (on currentPrice)
+    if (minAmount || maxAmount) {
+      whereClause.currentPrice = {};
+      if (minAmount) whereClause.currentPrice[db.Sequelize.Op.gte] = minAmount;
+      if (maxAmount) whereClause.currentPrice[db.Sequelize.Op.lte] = maxAmount;
+    }
+
+    // Date range filter (on createdAt)
+    if (startDate || endDate) {
+      whereClause.createdAt = {};
+      if (startDate) whereClause.createdAt[db.Sequelize.Op.gte] = new Date(startDate);
+      if (endDate) {
+        let end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        whereClause.createdAt[db.Sequelize.Op.lte] = end;
+      }
+    }
+
+    // Associations to include for filtering and display
+    let includes = [
+      {
+        model: db.department,
+        as: 'departmentDetails', // Make sure this alias exists in association.js
+        required: departmentId ? true : false,
+        ...(departmentId && { where: { id: departmentId } })
+      },
+      {
+        model: db.intake_request,
+        as: 'intakeRequestDetails',
+        include: [
+          {
+            model: db.intake_request_approvers,
+            as: 'intakeRequestApprovers',
+            required: signerId ? true : false,
+            ...(signerId && { where: { userId: signerId } })
+          }
+        ],
+        required: signerId ? true : false
+      },
+      {
+        model: db.supplier,
+        as: 'supplierDetails',
+        required: false
+      }
+    ];
+
+    const entries = await CostSaving.findAll({
+      where: whereClause,
+      include: includes,
+      order: [['createdAt', 'DESC']]
+    });
+
     return res.status(200).json(entries);
   } catch (error) {
     console.error('Fetch All Error:', error);
-    return res.status(500).json({ message: 'Failed to fetch entries', error });
+    return res.status(500).json({ message: 'Failed to fetch entries', error: error.message });
   }
 };
 

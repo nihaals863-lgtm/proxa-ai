@@ -12,13 +12,17 @@ module.exports = (sequelize, DataTypes) => {
             type: DataTypes.STRING,
             allowNull: false
         },
-        depreciationScheduleYears: {
-            type: DataTypes.INTEGER,
+        requesterName: {
+            type: DataTypes.STRING,
+            allowNull: false
+        },
+        departmentId: {
+            type: DataTypes.BIGINT,
             allowNull: false
         },
         group: {
             type: DataTypes.STRING,
-            allowNull: false
+            allowNull: true
         },
         category: {
             type: DataTypes.STRING,

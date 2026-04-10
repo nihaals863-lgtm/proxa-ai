@@ -30,39 +30,20 @@ const get_dashboard_data = async (req, res) => {
         });
         const totalIntakeRequests = await IntakeRequest.count({ where: adminWhereClause });
 
-        // Heuristic to find "Completed" projects: Intake Requests that are approved AND have a linked contract via the assigned supplier
+        // Projects Completed: Intake Requests that have been fully approved by the workflow
         const projectsCompleted = await IntakeRequest.count({
-            distinct: true,
-            col: 'id',
-            where: { ...adminWhereClause, status: 'approved' },
-            include: [{
-                model: db.assign_intake_request,
-                as: 'assignIntakeRequest',
-                required: true,
-                include: [{
-                    model: db.supplier,
-                    as: 'supplier',
-                    required: true,
-                    include: [{
-                        model: db.contract,
-                        as: 'contracts',
-                        required: true,
-                        where: adminWhereClause
-                    }]
-                }]
-            }]
+            where: { ...adminWhereClause, status: 'approved' }
         });
 
-        // "Active" projects: Intake Requests that are explicitly 'active' OR 'approved' but don't have a contract yet
-        const approvedWithoutContract = await IntakeRequest.count({
-            where: { ...adminWhereClause, status: 'approved' }
-        }) - projectsCompleted;
+        // Projects Pending: Intake Requests that are in 'pending' status
+        const projectsPending = await IntakeRequest.count({
+            where: { ...adminWhereClause, status: 'pending' }
+        });
 
-        const explicitlyActive = await IntakeRequest.count({
+        // Projects Active: Intake Requests that are in 'active' status
+        const projectsActive = await IntakeRequest.count({
             where: { ...adminWhereClause, status: 'active' }
         });
-
-        const projectsActive = explicitlyActive + approvedWithoutContract;
 
         const expiringContractsCount = await Contract.count({
             where: {
@@ -158,6 +139,7 @@ const get_dashboard_data = async (req, res) => {
                 totalIntakeRequests: totalIntakeRequests,
                 totalExpiringContracts: expiringContractsCount,
                 projectsCompleted: projectsCompleted,
+                projectsPending: projectsPending,
                 projectsActive: projectsActive,
             },
             topSuppliers: barGraphData,

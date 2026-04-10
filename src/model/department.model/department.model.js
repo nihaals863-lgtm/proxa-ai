@@ -50,7 +50,7 @@ module.exports = (sequelize, DataTypes) => {
     },
     type: {
       type: DataTypes.STRING,
-
+      comment: "Line of Business or Approvers & Procurement"
     }
 
   });

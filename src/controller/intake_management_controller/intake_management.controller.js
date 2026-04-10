@@ -312,37 +312,47 @@ const get_all_not_pending_intake_requests = async (req, res) => {
       where.requestType = requestType;
     }
 
-    // ✅ Always exclude 'pending' if status is not explicitly passed
-    // EXCEPTION: Department users MUST be able to see pending requests assigned to them
-    if (status) {
-      where.status = status;
-    } else if (userType === 'department') {
-      // For department users, we don't strictly exclude 'pending' because they need to approve them
-      // However, usually they only care about 'pending' and 'approved' etc.
-      // We can keep it open or specifically allow pending
-    } else {
-      where.status = { [Op.ne]: 'pending' }; // Exclude 'pending' by default for others
-    }
+    // We will handle status filtering depending on the userType.
+    if (userType === 'department') {
+        const approvalWhere = { userId: userId };
+        if (status) {
+           if (status === 'approved') {
+               approvalWhere.status = 'approved';
+           } else if (status === 'pending') {
+               approvalWhere.status = { [Op.ne]: 'approved' };
+           }
+        }
 
-    // Add userId filter for users (SuperAdmin and Admin see more)
-    if (!isSuperAdmin && userId) {
-      if (userType === 'department') {
         const assignedApprovals = await intake_request_approvers.findAll({
-          where: { userId: userId },
+          where: approvalWhere,
           attributes: ['intakeRequestId'],
           raw: true
         });
         const assignedIds = assignedApprovals.map(a => a.intakeRequestId);
+        
         where[Op.or] = [
           { userId: userId },
           { id: assignedIds.length > 0 ? { [Op.in]: assignedIds } : 0 }
         ];
-      } else if (userType === 'admin') {
-         // Admin should see only their own data
-         where.userId = userId;
-      } else {
-        where.userId = userId;
-      }
+
+        // If rejecting, that's typically a global state
+        if (status === 'rejected') {
+            where.status = 'rejected';
+        }
+    } else {
+        // For admin and superadmin
+        if (status) {
+            // 'pending' filter should also match 'active' since both show as "Pending" in the UI
+            if (status === 'pending') {
+                where.status = { [Op.in]: ['pending', 'active'] };
+            } else {
+                where.status = status;
+            }
+        }
+
+        if (!isSuperAdmin && userId) {
+            where.userId = userId;
+        }
     }
 
     const { rows: intakeRequests, count: totalRecords } = await intakeRequest.findAndCountAll({
@@ -363,6 +373,43 @@ const get_all_not_pending_intake_requests = async (req, res) => {
       order: [['createdAt', 'DESC']],
     });
 
+    // Create a base where clause for summary counts that ignores the specific status filter
+    const summaryWhere = { ...where };
+    delete summaryWhere.status;
+
+    // Calculate Summary Counts specifically for the current user's role
+    let summary;
+    if (userType === 'department') {
+      // For department users, count based on their individual approvals
+      const deptApprovedCount = await intake_request_approvers.count({
+        where: { userId: userId, status: 'approved' }
+      });
+      const deptPendingCount = await intake_request_approvers.count({
+        where: { userId: userId, status: { [Op.ne]: 'approved' } }
+      });
+      const globalRejectedCount = await intakeRequest.count({
+        where: { ...summaryWhere, status: 'rejected' }
+      });
+      summary = {
+        active: deptPendingCount,
+        approved: deptApprovedCount,
+        rejected: globalRejectedCount,
+        total: deptPendingCount + deptApprovedCount + globalRejectedCount
+      };
+    } else {
+      // For Admin/SuperAdmin, keep global counts for oversight
+      const activeCount = await intakeRequest.count({ where: { ...summaryWhere, status: 'active' } });
+      const pendingCount = await intakeRequest.count({ where: { ...summaryWhere, status: 'pending' } });
+      const approvedCount = await intakeRequest.count({ where: { ...summaryWhere, status: 'approved' } });
+      const rejectedCount = await intakeRequest.count({ where: { ...summaryWhere, status: 'rejected' } });
+      summary = {
+        active: activeCount + pendingCount,
+        approved: approvedCount,
+        rejected: rejectedCount,
+        total: activeCount + pendingCount + approvedCount + rejectedCount
+      };
+    }
+
     if (intakeRequests.length === 0) {
       return res.status(404).json({
         status: false,
@@ -371,7 +418,21 @@ const get_all_not_pending_intake_requests = async (req, res) => {
       });
     }
 
+    // Fetch the supplier information for the assigned requests
     const requestIds = intakeRequests.map(req => req.id);
+
+    // If department user, fetch their individual status for these requests
+    let deptStatusMap = {};
+    if (userType === 'department') {
+      const myApprovals = await intake_request_approvers.findAll({
+        where: { intakeRequestId: requestIds, userId: userId },
+        raw: true
+      });
+      deptStatusMap = myApprovals.reduce((acc, item) => {
+        acc[item.intakeRequestId] = item.status;
+        return acc;
+      }, {});
+    }
 
     const assignedRequests = await assignIntakeRequest.findAll({
       where: { requestId: requestIds },
@@ -393,6 +454,12 @@ const get_all_not_pending_intake_requests = async (req, res) => {
 
     const updatedRequests = intakeRequests.map(request => {
       const updatedRequest = { ...request.toJSON() };
+      
+      // Overwrite global status with department's own status for their view
+      if (userType === 'department' && deptStatusMap[request.id]) {
+        updatedRequest.status = deptStatusMap[request.id];
+      }
+
       if (supplierMap[request.id]) {
         updatedRequest.supplier = supplierMap[request.id];
       }
@@ -412,6 +479,7 @@ const get_all_not_pending_intake_requests = async (req, res) => {
       status: true,
       message: 'Requests fetched successfully',
       data: updatedRequests,
+      summary,
       ...(pagination && { pagination }),
     });
   } catch (error) {
@@ -756,9 +824,30 @@ const intake_dashboard = async (req, res) => {
         ...adminWhereClause
       }
     });
+    const activeRequests = await intakeRequest.count({
+      where: {
+        status: "active",
+        ...adminWhereClause
+      }
+    });
+
+    const { status, searchTerm } = req.query;
+    const listWhereClause = { ...adminWhereClause };
+
+    if (status && status !== 'All Approvals') {
+       listWhereClause.status = status.toLowerCase();
+    }
+
+    if (searchTerm) {
+       listWhereClause[Op.or] = [
+         { requesterName: { [Op.like]: `%${searchTerm}%` } },
+         { requestType: { [Op.like]: `%${searchTerm}%` } },
+         { id: searchTerm }
+       ];
+    }
 
     const allRequests = await intakeRequest.findAll({
-      where: adminWhereClause,
+      where: listWhereClause,
       offset,
       limit,
       order: [['createdAt', 'DESC']],
@@ -814,6 +903,7 @@ const intake_dashboard = async (req, res) => {
         totalRequests,
         pendingApprovals,
         approvedRequests,
+        activeRequests,
         allRequests: updatedRequests,
         pagination: {
           currentPage: page,

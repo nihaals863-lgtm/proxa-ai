@@ -91,6 +91,7 @@ db.supplier_performance = require("../src/model/supplier_model/supplier_performa
 db.client_license = require("../src/model/license_model/client_license.model")(sequelize, DataTypes)
 db.client_license_assignment = require("../src/model/license_model/client_license_assignment.model")(sequelize, DataTypes)
 db.inventory = require("../src/model/inventory_model/inventory.model")(sequelize, DataTypes)
+db.contract_preference = require("../src/model/renewal_notification_model/contract_preference.model")(sequelize, DataTypes)
 require('./association')(db);
 // db.sequelize.sync({ alter: false });
 

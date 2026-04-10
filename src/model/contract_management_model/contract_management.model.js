@@ -82,6 +82,10 @@ module.exports = (sequelize, DataTypes) => {
             type: DataTypes.STRING,
             allowNull: true,
         },
+        intakeRequestId: {
+            type: DataTypes.BIGINT,
+            allowNull: true,
+        },
         userId: {
             type: DataTypes.BIGINT,
         },
