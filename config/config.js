@@ -95,9 +95,9 @@ db.contract_preference = require("../src/model/renewal_notification_model/contra
 require('./association')(db);
 // db.sequelize.sync({ alter: false });
 
-if (NODE_ENV !== 'production') {
-    db.sequelize.sync({ alter: false });
-}
+// Always sync the database schema in both Local and Production
+// { alter: false } ensures tables are created if missing, but doesn't force schema changes that could lose data
+db.sequelize.sync({ alter: false });
 
 
 module.exports = db;
